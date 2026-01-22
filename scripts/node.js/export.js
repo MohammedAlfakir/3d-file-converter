@@ -53,5 +53,6 @@ async function runPipeline(pipelineSteps = []) {
     await runPipeline(exportPipeline);
   } catch (err) {
     console.error(err);
+    process.exit(1);
   }
 })();

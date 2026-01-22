@@ -34,7 +34,7 @@ if input_file_format == "obj":
   bpy.ops.import_scene.obj(filepath=input_file_path)
 if input_file_format == "fbx":
   bpy.ops.import_scene.fbx(filepath=input_file_path)
-if input_file_format == "gltf":
+if input_file_format in ("gltf", "glb"):
    bpy.ops.import_scene.gltf(filepath=input_file_path)
 
 #--------------------------------------------------------------------
