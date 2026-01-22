@@ -84,10 +84,6 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
-app.get("/", (req, res) => {
-  res.send("3D Converter API is running");
-});
-
 app.post("/api/cleanup", (req, res) => {
   fs.readdir(UPLOAD_DIR, (err, files) => {
     if (err) {
@@ -233,6 +229,11 @@ if (process.env.NODE_ENV === "production") {
 
   app.get("*", (req, res) => {
     res.sendFile(path.join(clientBuildPath, "index.html"));
+  });
+} else {
+  // Development fallback
+  app.get("/", (req, res) => {
+    res.send("3D Converter API is running (Development Mode)");
   });
 }
 
