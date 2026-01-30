@@ -1,5 +1,49 @@
+# Dependencies (will be installed fresh in container)
 node_modules/
+client/node_modules/
+
+# Build outputs (will be built in container)
+client/dist/
+
+# Development files
+.git/
+.gitignore
+.nvmrc
+.eslintrc
 coverage/
-Dockerfile
-docker-compose.yml
+
+# Documentation (not needed in production)
+*.md
+!README.md
+REFACTORING_PLAN.md
+tasks/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
 yarn-error.log
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Docker files (avoid recursive copy)
+Dockerfile*
+docker-compose*
+
+# Deployment scripts
+deploy.sh
+
+# Data directory (will be mounted as volume)
+data/
