@@ -1,5 +1,5 @@
 /**
- * Health check routes
+ * Health check routes with memory monitoring
  */
 
 import { FastifyInstance } from 'fastify';
@@ -15,6 +15,7 @@ import {
   isOdaAvailable, 
   getOdaVersion 
 } from '../conversion/providers/oda.provider';
+import { getMemoryStats, isMemoryCritical } from '../../common/monitor';
 
 export async function healthRoutes(fastify: FastifyInstance) {
   /**
@@ -37,8 +38,11 @@ export async function healthRoutes(fastify: FastifyInstance) {
       isOdaAvailable(),
     ]);
 
-    // Core tools must be available
-    const isReady = blender && assimp;
+    const memory = getMemoryStats();
+    const memoryOk = !isMemoryCritical();
+
+    // Core tools must be available and memory must be OK
+    const isReady = blender && assimp && memoryOk;
     
     return {
       status: isReady ? 'ready' : 'degraded',
@@ -46,6 +50,12 @@ export async function healthRoutes(fastify: FastifyInstance) {
         blender: blender ? 'ok' : 'unavailable',
         assimp: assimp ? 'ok' : 'unavailable',
         oda: oda ? 'ok' : 'unavailable', // ODA is optional (only for DWG)
+        memory: memoryOk ? 'ok' : 'critical',
+      },
+      memory: {
+        heapUsedMB: memory.heapUsedMB,
+        rssMB: memory.rssMB,
+        systemPercent: memory.percentUsed,
       },
       timestamp: new Date().toISOString(),
     };
@@ -76,6 +86,25 @@ export async function healthRoutes(fastify: FastifyInstance) {
       formats: {
         input: ['obj', 'fbx', 'gltf', 'glb', 'dxf', 'dwg'],
         output: ['obj', 'fbx', 'gltf', 'glb', 'dxf', 'dwg'],
+      },
+      timestamp: new Date().toISOString(),
+    };
+  });
+
+  /**
+   * GET /metrics - Detailed server metrics (for monitoring systems)
+   */
+  fastify.get('/metrics', async () => {
+    const memory = getMemoryStats();
+    
+    return {
+      uptime: Math.round(process.uptime()),
+      memory,
+      process: {
+        pid: process.pid,
+        nodeVersion: process.version,
+        platform: process.platform,
+        arch: process.arch,
       },
       timestamp: new Date().toISOString(),
     };

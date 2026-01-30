@@ -23,9 +23,9 @@
 
 ## ✅ Prerequisites
 
-- [ ] Task 01-04 completed
-- [ ] Server running with Fastify
-- [ ] Conversion routes working
+- [x] Task 01-04 completed
+- [x] Server running with Fastify
+- [x] Conversion routes working
 
 ---
 

@@ -1,5 +1,5 @@
 /**
- * Fastify Application Setup
+ * Fastify Application Setup with Production Safeguards
  */
 
 import path from 'path';
@@ -13,6 +13,7 @@ import { AppError } from './common/errors';
 import { conversionRoutes } from './modules/conversion';
 import { healthRoutes } from './modules/health';
 import { ensureUploadDir, startCleanupJob } from './modules/files';
+import { rateLimitPlugin } from './plugins';
 
 let cleanupInterval: NodeJS.Timeout | null = null;
 
@@ -20,17 +21,23 @@ export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
     logger: {
       level: config.logLevel,
-      transport: {
+      transport: config.nodeEnv !== 'production' ? {
         target: 'pino-pretty',
         options: {
           colorize: true,
           translateTime: 'HH:MM:ss Z',
           ignore: 'pid,hostname',
         },
-      },
+      } : undefined, // Use JSON logging in production
     },
     bodyLimit: config.maxFileSize,
+    // Timeouts
+    connectionTimeout: config.conversionTimeout + 30000, // Give buffer for response
+    requestTimeout: config.conversionTimeout,
   });
+
+  // Register rate limiting plugin (production protection)
+  await app.register(rateLimitPlugin);
 
   // Register plugins
   await app.register(cors, {

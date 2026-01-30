@@ -155,11 +155,18 @@ RUN mkdir -p data/uploads && chmod 755 data/uploads
 ENV NODE_ENV=production
 ENV PORT=3001
 
+# Concurrency limits (prevent OOM)
+ENV MAX_CONCURRENT_BLENDER=2
+ENV MAX_CONCURRENT_ASSIMP=5
+
+# Conversion timeout (5 minutes)
+ENV CONVERSION_TIMEOUT=300000
+
 EXPOSE 3001
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:3001/health || exit 1
+# Health check - checks readiness endpoint including tool availability
+HEALTHCHECK --interval=30s --timeout=15s --start-period=60s --retries=3 \
+    CMD curl -sf http://localhost:3001/ready | grep -q '"status":"ready"' || exit 1
 
 # Start the Fastify server (TypeScript compiled to dist/)
 CMD ["node", "server/dist/server.js"]
