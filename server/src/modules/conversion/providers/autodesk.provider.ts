@@ -629,10 +629,13 @@ export async function apsConvert(
     // 3. Upload file
     const objectId = await uploadFile(token, APS_BUCKET_KEY, inputPath);
 
-    // DXF files require two-step conversion: DXF → SVF2 → OBJ
-    // because direct DXF → OBJ is not supported
-    if (inputExt === '.dxf' && (outputFormat === 'obj' || outputFormat === 'stl')) {
-      console.log('[APS] Using two-step conversion for DXF: SVF2 → OBJ');
+    // DWG and DXF files require two-step conversion: DWG/DXF → SVF2 → OBJ
+    // because direct conversion to OBJ/STL is not supported for these AutoCAD formats
+    const needsTwoStepConversion = (inputExt === '.dxf' || inputExt === '.dwg') && 
+                                   (outputFormat === 'obj' || outputFormat === 'stl');
+    
+    if (needsTwoStepConversion) {
+      console.log(`[APS] Using two-step conversion for ${inputExt.toUpperCase()}: SVF2 → ${outputFormat.toUpperCase()}`);
 
       // Step 1: Translate to SVF2
       const urn = await createSvf2TranslationJob(token, objectId);

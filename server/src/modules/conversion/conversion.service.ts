@@ -2,33 +2,38 @@
  * Conversion Service - Smart routing between conversion tools
  * 
  * Decision Matrix:
- * - Simple mesh (OBJ, STL, PLY, GLB, GLTF): Try Assimp first, fallback to Blender
- * - CAD formats (DXF): Use Blender, fallback to FreeCAD for 3D solids
- * - Binary DXF: ODA → ASCII DXF → Blender/FreeCAD
- * - DWG input: ODA → DXF → target via Blender/FreeCAD/Assimp
- * - DWG output: Source → DXF via Blender → DWG via ODA
+ * 
+ * 1. DXF ↔ DWG: Use ODA File Converter (direct format swap)
+ * 
+ * 2. DWG/DXF INPUT → Any format: Use Autodesk APS (handles ACIS 3D solids)
+ * 
+ * 3. Any format → DWG: Convert to DXF first (Blender), then DXF → DWG (ODA)
+ * 
+ * 4. Any format → DXF: Use Blender directly
+ * 
+ * 5. Simple Mesh → Simple Mesh: Assimp → Blender → FreeCAD → APS (fallback chain)
+ * 
+ * 6. CAD formats: Blender → FreeCAD → APS (fallback chain)
+ * 
+ * This allows converting ANY format to ANY format with maximum compatibility.
  */
 
 import path from 'path';
 import fs from 'fs-extra';
 import { 
   blenderConvert, 
-  assimpConvert, 
-  odaConvert, 
-  dwgToDxf,
-  binaryDxfToAscii,
+  assimpConvert,
+  odaConvert,
   convertWithFreecad,
   canFreecadHandle,
   apsConvert,
-  isApsAvailable,
-  likelyHasAcisSolids
+  isApsAvailable
 } from './providers';
 import { 
   isSimpleMesh, 
   isCadFormat, 
   isDwgFormat, 
   isDxfFile,
-  isBinaryDxf,
   getExtension,
   generateOutputFilename 
 } from '../../common/utils';
@@ -87,119 +92,172 @@ export async function convertFile(
   let tool: ConversionResult['tool'];
 
   // =====================================================
-  // 1. DWG INPUT - Always convert to DXF first via ODA
+  // 1. DXF ↔ DWG (Use ODA - direct format swap)
   // =====================================================
-  if (isDwgFormat(inputFormat)) {
-    console.log(`[ConversionService] DWG input detected, using ODA pipeline`);
-    
-    if (normalizedOutputFormat === 'dxf') {
-      // Direct DWG → DXF via ODA
-      const odaResultPath = await odaConvert(inputPath, 'DXF');
-      // Rename to expected output path if different
-      if (odaResultPath !== outputPath) {
-        await fs.move(odaResultPath, outputPath, { overwrite: true });
-      }
-      tool = 'oda';
-    } else {
-      // DWG → DXF → target (with FreeCAD fallback for 3D solids)
-      const tempDxfPath = await dwgToDxf(inputPath);
-      try {
-        await convertDxfToTarget(tempDxfPath, outputPath, inputDir, normalizedOutputFormat);
-      } finally {
-        // Cleanup temp DXF
-        await fs.remove(tempDxfPath).catch(() => {});
-      }
-      tool = 'pipeline';
-    }
-    
-    return {
-      outputPath,
-      tool,
-      duration: Date.now() - startTime
-    };
-  }
-
-  // =====================================================
-  // 2. DWG OUTPUT - Convert to DXF first, then to DWG
-  // =====================================================
-  if (isDwgFormat(normalizedOutputFormat)) {
-    console.log(`[ConversionService] DWG output requested, using ODA pipeline`);
-    
-    if (inputFormat === 'dxf') {
-      // Direct DXF → DWG via ODA
-      const odaResultPath = await odaConvert(inputPath, 'DWG');
-      // Rename to expected output path if different
-      if (odaResultPath !== outputPath) {
-        await fs.move(odaResultPath, outputPath, { overwrite: true });
-      }
-      tool = 'oda';
-    } else {
-      // Source → DXF → DWG
-      const tempDxfPath = path.join(inputDir, `temp_${Date.now()}.dxf`);
-      try {
-        await blenderConvert(inputPath, tempDxfPath);
-        const odaResultPath = await odaConvert(tempDxfPath, 'DWG');
-        
-        // Rename the ODA output to expected output path
-        await fs.move(odaResultPath, outputPath, { overwrite: true });
-      } finally {
-        // Cleanup temp DXF
-        await fs.remove(tempDxfPath).catch(() => {});
-      }
-      tool = 'pipeline';
-    }
-    
-    return {
-      outputPath,
-      tool,
-      duration: Date.now() - startTime
-    };
-  }
-
-  // =====================================================
-  // 3. BINARY DXF INPUT - Convert to ASCII DXF via ODA first
-  // =====================================================
-  if (isDxfFile(inputPath) && isBinaryDxf(inputPath)) {
-    console.log(`[ConversionService] Binary DXF detected, converting to ASCII via ODA first...`);
-    
-    let asciiDxfPath: string | null = null;
+  if ((inputFormat === 'dxf' && normalizedOutputFormat === 'dwg') ||
+      (inputFormat === 'dwg' && normalizedOutputFormat === 'dxf')) {
+    console.log(`[ConversionService] DXF ↔ DWG conversion, using ODA File Converter...`);
+    const odaOutputFormat = normalizedOutputFormat.toUpperCase() as 'DXF' | 'DWG';
     try {
-      // Convert binary DXF to ASCII DXF via ODA
-      asciiDxfPath = await binaryDxfToAscii(inputPath);
-      
-      // Now convert the ASCII DXF to the target format
-      if (normalizedOutputFormat === 'dxf') {
-        // If target is DXF, just use the converted ASCII file
-        await fs.move(asciiDxfPath, outputPath, { overwrite: true });
-        return {
-          outputPath,
-          tool: 'oda',
-          duration: Date.now() - startTime
-        };
-      } else {
-        // Convert ASCII DXF to target format via Blender/FreeCAD
-        await convertDxfToTarget(asciiDxfPath, outputPath, inputDir, normalizedOutputFormat);
-        return {
-          outputPath,
-          tool: 'pipeline', // ODA + Blender/FreeCAD
-          duration: Date.now() - startTime
-        };
+      const odaOutputPath = await odaConvert(inputPath, odaOutputFormat);
+      // Move ODA output to expected output path if different
+      if (odaOutputPath !== outputPath) {
+        await fs.move(odaOutputPath, outputPath, { overwrite: true });
       }
-    } finally {
-      // Cleanup temp ASCII DXF if it wasn't moved to output
-      if (asciiDxfPath && await fs.pathExists(asciiDxfPath)) {
-        await fs.remove(asciiDxfPath).catch(() => {});
-      }
+      return {
+        outputPath,
+        tool: 'oda',
+        duration: Date.now() - startTime
+      };
+    } catch (odaErr) {
+      console.error(`[ConversionService] ODA conversion failed:`, odaErr);
+      throw new ConversionError(
+        `Failed to convert ${inputFormat.toUpperCase()} to ${normalizedOutputFormat.toUpperCase()}`,
+        `ODA File Converter failed. Error: ${odaErr instanceof Error ? odaErr.message : String(odaErr)}`
+      );
     }
   }
 
   // =====================================================
-  // 4. CAD FORMAT (DXF) - Try Blender, fallback to FreeCAD, then APS
+  // 2. Any format → DWG (via DXF intermediate using Blender + ODA)
+  // =====================================================
+  if (normalizedOutputFormat === 'dwg' && inputFormat !== 'dxf') {
+    console.log(`[ConversionService] Converting ${inputFormat.toUpperCase()} → DXF → DWG...`);
+    const tempDxfPath = path.join(inputDir, `temp_${Date.now()}.dxf`);
+    
+    try {
+      // Step 1: Convert to DXF via Blender
+      await blenderConvert(inputPath, tempDxfPath);
+      
+      // Step 2: Convert DXF to DWG via ODA
+      const odaOutputPath = await odaConvert(tempDxfPath, 'DWG');
+      
+      // Move ODA output to expected output path
+      if (odaOutputPath !== outputPath) {
+        await fs.move(odaOutputPath, outputPath, { overwrite: true });
+      }
+      
+      return {
+        outputPath,
+        tool: 'pipeline', // Blender + ODA
+        duration: Date.now() - startTime
+      };
+    } catch (err) {
+      throw new ConversionError(
+        `Failed to convert ${inputFormat.toUpperCase()} to DWG`,
+        `Error: ${err instanceof Error ? err.message : String(err)}`
+      );
+    } finally {
+      await fs.remove(tempDxfPath).catch(() => {});
+    }
+  }
+
+  // =====================================================
+  // 3. DWG/DXF INPUT → Any mesh format (Use Autodesk APS)
+  // =====================================================
+  const inputIsDwgDxf = isDwgFormat(inputFormat) || inputFormat === 'dxf';
+  
+  if (inputIsDwgDxf) {
+    console.log(`[ConversionService] DWG/DXF input detected, using Autodesk APS...`);
+    
+    // Check if APS is available
+    if (!isApsAvailable()) {
+      throw new ConversionError(
+        'DWG/DXF conversion requires Autodesk APS',
+        'DWG/DXF files require Autodesk cloud conversion. ' +
+        'Configure APS_CLIENT_ID and APS_CLIENT_SECRET environment variables to enable this feature.'
+      );
+    }
+    
+    // Cast to string for flexible comparison
+    const outFmt = normalizedOutputFormat as string;
+    
+    // Direct to OBJ/STL
+    if (outFmt === 'obj' || outFmt === 'stl') {
+      try {
+        await apsConvert(inputPath, outputPath, { 
+          outputFormat: outFmt as 'obj' | 'stl' 
+        });
+        return {
+          outputPath,
+          tool: 'aps',
+          duration: Date.now() - startTime
+        };
+      } catch (apsErr) {
+        console.error(`[ConversionService] APS conversion failed:`, apsErr);
+        throw new ConversionError(
+          `Failed to convert ${inputFormat.toUpperCase()} to ${normalizedOutputFormat.toUpperCase()}`,
+          `Autodesk APS cloud conversion failed. Error: ${apsErr instanceof Error ? apsErr.message : String(apsErr)}`
+        );
+      }
+    }
+    
+    // Other mesh formats: DWG/DXF → OBJ → target format
+    console.log(`[ConversionService] Converting DWG/DXF → OBJ → ${normalizedOutputFormat.toUpperCase()}...`);
+    const tempObjPath = path.join(inputDir, `temp_${Date.now()}.obj`);
+    
+    try {
+      // Step 1: Convert to OBJ via APS
+      await apsConvert(inputPath, tempObjPath, { outputFormat: 'obj' });
+      
+      // Step 2: Convert OBJ to final format
+      await convertWithFullFallback(tempObjPath, outputPath);
+      
+      return {
+        outputPath,
+        tool: 'pipeline', // APS + Blender/Assimp
+        duration: Date.now() - startTime
+      };
+    } catch (err) {
+      throw new ConversionError(
+        `Failed to convert ${inputFormat.toUpperCase()} to ${normalizedOutputFormat.toUpperCase()}`,
+        `Error: ${err instanceof Error ? err.message : String(err)}`
+      );
+    } finally {
+      await fs.remove(tempObjPath).catch(() => {});
+    }
+  }
+
+  // =====================================================
+  // 4. Any format → DXF (Use Blender)
+  // =====================================================
+  if (normalizedOutputFormat === 'dxf') {
+    console.log(`[ConversionService] Converting ${inputFormat.toUpperCase()} → DXF via Blender...`);
+    try {
+      await blenderConvert(inputPath, outputPath);
+      return {
+        outputPath,
+        tool: 'blender',
+        duration: Date.now() - startTime
+      };
+    } catch (blenderErr) {
+      throw new ConversionError(
+        `Failed to convert ${inputFormat.toUpperCase()} to DXF`,
+        `Blender could not export to DXF. Error: ${blenderErr instanceof Error ? blenderErr.message : String(blenderErr)}`
+      );
+    }
+  }
+
+  // =====================================================
+  // 5. SIMPLE MESH → SIMPLE MESH: Assimp → Blender → FreeCAD → APS
+  // =====================================================
+  if (isSimpleMesh(inputFormat) && isSimpleMesh(normalizedOutputFormat)) {
+    console.log(`[ConversionService] Simple mesh conversion: ${inputFormat} → ${normalizedOutputFormat}`);
+    
+    tool = await convertWithFullFallback(inputPath, outputPath);
+    
+    return {
+      outputPath,
+      tool,
+      duration: Date.now() - startTime
+    };
+  }
+
+  // =====================================================
+  // 6. CAD FORMATS: Blender → FreeCAD → APS
   // =====================================================
   if (isCadFormat(inputFormat) || isCadFormat(normalizedOutputFormat)) {
     console.log(`[ConversionService] CAD format detected, trying Blender first...`);
-    // Cast for type safety - output format might be obj/stl even when input is CAD
-    const outFmt = normalizedOutputFormat as string;
     
     try {
       await blenderConvert(inputPath, outputPath);
@@ -209,34 +267,43 @@ export async function convertFile(
         duration: Date.now() - startTime
       };
     } catch (blenderErr) {
-      console.log(`[ConversionService] Blender failed (likely 3D solids), trying FreeCAD...`);
+      console.log(`[ConversionService] Blender failed, trying FreeCAD...`);
       
-      // FreeCAD can handle ACIS 3D solids that Blender cannot
+      // Cast for flexible comparison
+      const outFmt = normalizedOutputFormat as string;
+      
       if (canFreecadHandle(inputFormat)) {
-        // FreeCAD outputs to mesh format (STL), then convert to final format
         const tempStlPath = path.join(inputDir, `temp_${Date.now()}.stl`);
         try {
           const freecadResult = await convertWithFreecad(inputPath, 'stl');
-          
-          // Convert STL to final format using Assimp/Blender
           await fs.move(freecadResult.outputPath, tempStlPath, { overwrite: true });
-          await convertWithFallback(tempStlPath, outputPath);
+          
+          if (outFmt === 'stl') {
+            await fs.move(tempStlPath, outputPath, { overwrite: true });
+          } else {
+            await convertWithFullFallback(tempStlPath, outputPath);
+          }
           
           return {
             outputPath,
-            tool: 'pipeline', // FreeCAD + Assimp/Blender
+            tool: 'pipeline',
             duration: Date.now() - startTime
           };
         } catch (freecadErr) {
-          console.log(`[ConversionService] FreeCAD also failed, trying Autodesk APS...`);
+          console.log(`[ConversionService] FreeCAD failed, trying APS as last resort...`);
           
-          // Try Autodesk APS as ultimate fallback for ACIS 3D solids
-          if (isApsAvailable() && (outFmt === 'obj' || outFmt === 'stl')) {
+          // Try APS as ultimate fallback
+          if (isApsAvailable()) {
             try {
-              // APS supports direct conversion to OBJ/STL
-              await apsConvert(inputPath, outputPath, { 
-                outputFormat: outFmt as 'obj' | 'stl' 
-              });
+              const tempObjPath = path.join(inputDir, `temp_aps_${Date.now()}.obj`);
+              await apsConvert(inputPath, tempObjPath, { outputFormat: 'obj' });
+              
+              if (outFmt === 'obj') {
+                await fs.move(tempObjPath, outputPath, { overwrite: true });
+              } else {
+                await convertWithFullFallback(tempObjPath, outputPath);
+                await fs.remove(tempObjPath).catch(() => {});
+              }
               
               return {
                 outputPath,
@@ -244,33 +311,32 @@ export async function convertFile(
                 duration: Date.now() - startTime
               };
             } catch (apsErr) {
-              console.log(`[ConversionService] Autodesk APS also failed`);
-              console.error(apsErr);
+              console.log(`[ConversionService] APS also failed`);
             }
           }
           
-          // All options exhausted - provide informative error
           throw new ConversionError(
-            'DXF file contains 3DSOLID (ACIS) entities that cannot be converted',
-            'This file contains proprietary ACIS/SAT 3D solid geometry. ' +
-            (isApsAvailable() 
-              ? 'Autodesk APS conversion also failed. '
-              : 'Configure APS_CLIENT_ID and APS_CLIENT_SECRET for Autodesk cloud conversion. ') +
-            'Alternative solutions: (1) Export from original CAD software as STEP, IGES, ' +
-            'or mesh format (STL/OBJ), (2) Use AutoCAD to explode/mesh the solids before exporting.'
+            `Failed to convert ${inputFormat.toUpperCase()} to ${normalizedOutputFormat.toUpperCase()}`,
+            'All conversion methods failed (Blender, FreeCAD, APS).'
           );
         } finally {
           await fs.remove(tempStlPath).catch(() => {});
         }
       }
       
-      // FreeCAD can't handle it, try APS directly
-      if (isApsAvailable() && (outFmt === 'obj' || outFmt === 'stl')) {
-        console.log(`[ConversionService] Trying Autodesk APS directly...`);
+      // FreeCAD can't handle this format, try APS directly
+      if (isApsAvailable()) {
+        console.log(`[ConversionService] Trying APS directly...`);
         try {
-          await apsConvert(inputPath, outputPath, { 
-            outputFormat: outFmt as 'obj' | 'stl' 
-          });
+          const tempObjPath = path.join(inputDir, `temp_aps_${Date.now()}.obj`);
+          await apsConvert(inputPath, tempObjPath, { outputFormat: 'obj' });
+          
+          if (outFmt === 'obj') {
+            await fs.move(tempObjPath, outputPath, { overwrite: true });
+          } else {
+            await convertWithFullFallback(tempObjPath, outputPath);
+            await fs.remove(tempObjPath).catch(() => {});
+          }
           
           return {
             outputPath,
@@ -278,20 +344,19 @@ export async function convertFile(
             duration: Date.now() - startTime
           };
         } catch (apsErr) {
-          console.log(`[ConversionService] Autodesk APS failed`);
-          console.error(apsErr);
+          console.log(`[ConversionService] APS also failed`);
         }
       }
       
-      // Re-throw if nothing can handle it
       throw blenderErr;
     }
   }
 
   // =====================================================
-  // 5. SIMPLE MESH - Try Assimp first, fallback to Blender
+  // 4. FALLBACK - Try full chain for any other formats
   // =====================================================
-  tool = await convertWithFallback(inputPath, outputPath);
+  console.log(`[ConversionService] Using full fallback chain...`);
+  tool = await convertWithFullFallback(inputPath, outputPath);
   
   return {
     outputPath,
@@ -301,106 +366,83 @@ export async function convertFile(
 }
 
 /**
- * Convert DXF to target format with FreeCAD/APS fallback for 3D solids
+ * Full fallback chain: Assimp → Blender → FreeCAD → APS
+ * Tries each converter in order until one succeeds
  */
-async function convertDxfToTarget(
-  dxfPath: string,
-  outputPath: string,
-  workDir: string,
-  outputFormat: string
-): Promise<void> {
-  try {
-    // Try Blender first (works for DXF with lines/polylines)
-    console.log(`[ConversionService] Trying Blender for DXF conversion...`);
-    await blenderConvert(dxfPath, outputPath);
-  } catch (blenderErr) {
-    console.log(`[ConversionService] Blender failed (likely 3D solids), trying FreeCAD...`);
-    
-    // FreeCAD fallback for ACIS 3D solids
-    if (canFreecadHandle('dxf')) {
-      const tempStlPath = path.join(workDir, `temp_${Date.now()}.stl`);
-      try {
-        const freecadResult = await convertWithFreecad(dxfPath, 'stl');
-        
-        if (outputFormat === 'stl') {
-          await fs.move(freecadResult.outputPath, outputPath, { overwrite: true });
-        } else {
-          // Convert STL to final format
-          await fs.move(freecadResult.outputPath, tempStlPath, { overwrite: true });
-          await convertWithFallback(tempStlPath, outputPath);
-        }
-      } catch (freecadErr) {
-        console.log(`[ConversionService] FreeCAD also failed, trying Autodesk APS...`);
-        
-        // Try Autodesk APS as final fallback
-        if (isApsAvailable() && (outputFormat === 'obj' || outputFormat === 'stl')) {
-          try {
-            await apsConvert(dxfPath, outputPath, { 
-              outputFormat: outputFormat as 'obj' | 'stl' 
-            });
-            return; // Success with APS
-          } catch (apsErr) {
-            console.log(`[ConversionService] Autodesk APS also failed`);
-            console.error(apsErr);
-          }
-        }
-        
-        // All options failed
-        throw new ConversionError(
-          'DXF file contains 3DSOLID (ACIS) entities that cannot be converted',
-          'This file contains proprietary ACIS/SAT 3D solid geometry. ' +
-          (isApsAvailable() 
-            ? 'Autodesk APS conversion also failed. '
-            : 'Configure APS_CLIENT_ID and APS_CLIENT_SECRET for Autodesk cloud conversion. ') +
-          'Alternative solutions: (1) Export from original CAD software as STEP, IGES, ' +
-          'or mesh format (STL/OBJ), (2) Use AutoCAD to explode/mesh the solids before exporting.'
-        );
-      } finally {
-        await fs.remove(tempStlPath).catch(() => {});
-      }
-    } else {
-      // FreeCAD can't handle this format, try APS directly
-      if (isApsAvailable() && (outputFormat === 'obj' || outputFormat === 'stl')) {
-        console.log(`[ConversionService] Trying Autodesk APS directly...`);
-        try {
-          await apsConvert(dxfPath, outputPath, { 
-            outputFormat: outputFormat as 'obj' | 'stl' 
-          });
-          return; // Success with APS
-        } catch (apsErr) {
-          console.log(`[ConversionService] Autodesk APS failed`);
-          console.error(apsErr);
-        }
-      }
-      
-      throw blenderErr;
-    }
-  }
-}
-
-/**
- * Try Assimp first for simple meshes, fallback to Blender on failure
- */
-async function convertWithFallback(
+async function convertWithFullFallback(
   inputPath: string,
   outputPath: string
-): Promise<'assimp' | 'blender'> {
+): Promise<ConversionResult['tool']> {
   const inputFormat = getExtension(inputPath);
   const outputFormat = getExtension(outputPath);
+  const inputDir = path.dirname(inputPath);
 
-  // Only try Assimp for simple mesh conversions
+  // 1. Try Assimp first (fast, good for simple meshes)
   if (isSimpleMesh(inputFormat) && isSimpleMesh(outputFormat)) {
-    try {      console.log(`[ConversionService] Trying Assimp first...`);
+    try {
+      console.log(`[ConversionService] Trying Assimp...`);
       await assimpConvert(inputPath, outputPath);
       return 'assimp';
     } catch (err) {
-      console.log(`[ConversionService] Assimp failed, falling back to Blender`);
-      console.error(err);
+      console.log(`[ConversionService] Assimp failed, trying Blender...`);
     }
   }
 
-  // Fallback to Blender
-  console.log(`[ConversionService] Using Blender`);
-  await blenderConvert(inputPath, outputPath);
-  return 'blender';
+  // 2. Try Blender
+  try {
+    console.log(`[ConversionService] Trying Blender...`);
+    await blenderConvert(inputPath, outputPath);
+    return 'blender';
+  } catch (err) {
+    console.log(`[ConversionService] Blender failed, trying FreeCAD...`);
+  }
+
+  // 3. Try FreeCAD
+  if (canFreecadHandle(inputFormat)) {
+    const tempStlPath = path.join(inputDir, `temp_freecad_${Date.now()}.stl`);
+    try {
+      console.log(`[ConversionService] Trying FreeCAD...`);
+      const freecadResult = await convertWithFreecad(inputPath, 'stl');
+      await fs.move(freecadResult.outputPath, tempStlPath, { overwrite: true });
+      
+      if (outputFormat === 'stl') {
+        await fs.move(tempStlPath, outputPath, { overwrite: true });
+      } else {
+        // Convert STL to final format via Blender
+        await blenderConvert(tempStlPath, outputPath);
+      }
+      return 'pipeline';
+    } catch (err) {
+      console.log(`[ConversionService] FreeCAD failed, trying APS...`);
+    } finally {
+      await fs.remove(tempStlPath).catch(() => {});
+    }
+  }
+
+  // 4. Try APS as ultimate fallback
+  if (isApsAvailable()) {
+    const tempObjPath = path.join(inputDir, `temp_aps_${Date.now()}.obj`);
+    try {
+      console.log(`[ConversionService] Trying APS as last resort...`);
+      await apsConvert(inputPath, tempObjPath, { outputFormat: 'obj' });
+      
+      if (outputFormat === 'obj') {
+        await fs.move(tempObjPath, outputPath, { overwrite: true });
+      } else {
+        await blenderConvert(tempObjPath, outputPath);
+        await fs.remove(tempObjPath).catch(() => {});
+      }
+      return 'aps';
+    } catch (err) {
+      console.log(`[ConversionService] APS also failed`);
+      await fs.remove(tempObjPath).catch(() => {});
+    }
+  }
+
+  // All methods failed
+  throw new ConversionError(
+    `Failed to convert ${inputFormat.toUpperCase()} to ${outputFormat.toUpperCase()}`,
+    'All conversion methods failed (Assimp, Blender, FreeCAD, APS). ' +
+    'The file may be corrupted or in an unsupported format.'
+  );
 }
