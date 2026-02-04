@@ -1,7 +1,7 @@
 {
   "name": "3d-file-converter",
   "version": "0.3.0",
-  "description": "A 3D File Exporter Powered by Blender",
+  "description": "A 3D File Exporter",
   "scripts": {
     "lint": "eslint --format codeframe",
     "test": "echo \"Error: no test specified\" && exit 1",
@@ -11,7 +11,7 @@
     "install:all": "npm install && cd client && npm install",
     "build": "cd client && npm install && npm run build",
     "start:prod": "NODE_ENV=production node  server/index.js"
-  },
+  },  
   "author": "Francisco Avila <elfrank.ab@gmail.com> (http://github.com/elfrank/)",
   "license": "MIT",
   "devDependencies": {

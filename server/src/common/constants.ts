@@ -3,12 +3,12 @@
  */
 
 // Supported file formats
-export const SUPPORTED_INPUT_FORMATS = ['obj', 'fbx', 'gltf', 'glb', 'dxf', 'dwg'] as const;
-export const SUPPORTED_OUTPUT_FORMATS = ['obj', 'fbx', 'gltf', 'glb', 'dxf', 'dwg'] as const;
+export const SUPPORTED_INPUT_FORMATS = ['obj', 'stl', 'fbx', 'ply', 'gltf', 'glb', 'dae', '3ds', 'dxf', 'dwg'] as const;
+export const SUPPORTED_OUTPUT_FORMATS = ['obj', 'stl', 'fbx', 'ply', 'gltf', 'glb', 'dae', '3ds', 'dxf', 'dwg'] as const;
 
 // Format categories for routing decisions
-export const SIMPLE_MESH_FORMATS = ['obj', 'stl', 'ply', 'glb', 'gltf'] as const;
-export const CAD_FORMATS = ['dxf', 'dwg'] as const;
+export const SIMPLE_MESH_FORMATS = ['obj', 'stl', 'fbx', 'ply', 'glb', 'gltf', 'dae', '3ds'] as const;
+export const CAD_FORMATS = ['dxf', 'dwg', 'step', 'iges', 'stp', 'igs'] as const;
 
 // File size limits
 export const MAX_FILE_SIZE_MB = 100;
@@ -21,9 +21,13 @@ export const ODA_CONVERTER_PATH = '/usr/bin/ODAFileConverter';
 // MIME types for 3D files
 export const MIME_TYPES: Record<string, string> = {
   obj: 'model/obj',
+  stl: 'model/stl',
   fbx: 'application/octet-stream',
+  ply: 'application/x-ply',
   gltf: 'model/gltf+json',
   glb: 'model/gltf-binary',
+  dae: 'model/vnd.collada+xml',
+  '3ds': 'application/x-3ds',
   dxf: 'application/dxf',
   dwg: 'application/acad',
 };

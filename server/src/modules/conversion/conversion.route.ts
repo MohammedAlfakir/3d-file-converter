@@ -11,10 +11,24 @@ import { ValidationError } from '../../common/errors';
 import { 
   isSupportedInputFormat, 
   isSupportedOutputFormat,
-  SUPPORTED_OUTPUT_FORMATS 
+  SUPPORTED_OUTPUT_FORMATS,
+  SUPPORTED_INPUT_FORMATS
 } from '../../common/constants';
-import { getExtension, generateUniqueFilename, sanitizeFilename } from '../../common/utils';
+import { getExtension, sanitizeFilename } from '../../common/utils';
 import config from '../../config/env';
+
+/**
+ * Generate a unique filename with timestamp prefix and original name
+ * Format: {timestamp}_{originalName}.{ext}
+ */
+function generateTimestampFilename(originalName: string): string {
+  const ext = path.extname(originalName);
+  const baseName = path.basename(originalName, ext);
+  const timestamp = Date.now();
+  // Sanitize the base name but keep it readable
+  const safeName = baseName.replace(/[^a-zA-Z0-9._-]/g, '_');
+  return `${timestamp}_${safeName}${ext}`;
+}
 
 export async function conversionRoutes(fastify: FastifyInstance) {
   /**
@@ -24,7 +38,7 @@ export async function conversionRoutes(fastify: FastifyInstance) {
     // Parse all parts of the multipart request
     const parts = request.parts();
     
-    let filename: string | null = null;
+    let originalFilename: string | null = null;
     let inputPath: string | null = null;
     let targetFormat = 'glb';
     const uploadDir = path.resolve(config.uploadDir);
@@ -35,18 +49,17 @@ export async function conversionRoutes(fastify: FastifyInstance) {
     for await (const part of parts) {
       if (part.type === 'file') {
         // Save file immediately while streaming
-        filename = part.filename;
-        const safeFilename = sanitizeFilename(filename);
-        const uniqueFilename = generateUniqueFilename(safeFilename);
+        originalFilename = part.filename;
+        const uniqueFilename = generateTimestampFilename(originalFilename);
         inputPath = path.join(uploadDir, uniqueFilename);
         await pipeline(part.file, fs.createWriteStream(inputPath));
-        fastify.log.info(`File uploaded: ${uniqueFilename}`);
+        fastify.log.info(`File uploaded: ${uniqueFilename} (original: ${originalFilename})`);
       } else if (part.type === 'field' && part.fieldname === 'format') {
         targetFormat = String(part.value);
       }
     }
     
-    if (!inputPath || !filename) {
+    if (!inputPath || !originalFilename) {
       throw new ValidationError('No file uploaded');
     }
     
@@ -61,11 +74,11 @@ export async function conversionRoutes(fastify: FastifyInstance) {
     }
 
     // Validate input format
-    const inputFormat = getExtension(filename);
+    const inputFormat = getExtension(originalFilename);
     if (!isSupportedInputFormat(inputFormat)) {
       await fs.remove(inputPath).catch(() => {});
       throw new ValidationError(
-        `Unsupported input format: ${inputFormat}. Supported: obj, fbx, gltf, glb, dxf, dwg`
+        `Unsupported input format: ${inputFormat}. Supported: ${SUPPORTED_INPUT_FORMATS.join(', ')}`
       );
     }
 
@@ -78,11 +91,21 @@ export async function conversionRoutes(fastify: FastifyInstance) {
         fastify.log.warn(`Failed to delete input file: ${err.message}`);
       });
 
-      const outputFilename = path.basename(result.outputPath);
+      // Generate download filename: timestamp_originalName.newExt
+      const originalBaseName = path.basename(originalFilename, path.extname(originalFilename));
+      const safeOriginalName = originalBaseName.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const timestamp = Date.now();
+      const downloadFilename = `${timestamp}_${safeOriginalName}.${targetFormat}`;
+      
+      // Rename output file to use the download filename
+      const outputDir = path.dirname(result.outputPath);
+      const finalOutputPath = path.join(outputDir, downloadFilename);
+      await fs.move(result.outputPath, finalOutputPath, { overwrite: true });
 
       return {
         message: 'Conversion successful',
-        downloadUrl: `/api/download/${outputFilename}`,
+        downloadUrl: `/api/download/${downloadFilename}`,
+        originalFilename: `${safeOriginalName}.${targetFormat}`,
         tool: result.tool,
         duration: result.duration,
       };
@@ -110,9 +133,20 @@ export async function conversionRoutes(fastify: FastifyInstance) {
         return reply.status(404).send({ error: 'File not found' });
       }
 
-      // Set headers for download
-      const ext = getExtension(filename);
-      reply.header('Content-Disposition', `attachment; filename="${safeFilename}"`);
+      // Extract original filename from the stored filename (format: timestamp_originalName.ext)
+      // e.g., "1770123456789_MyModel.glb" -> "MyModel.glb"
+      let downloadName = safeFilename;
+      const underscoreIndex = safeFilename.indexOf('_');
+      if (underscoreIndex > 0) {
+        // Check if the part before underscore looks like a timestamp (all digits)
+        const prefix = safeFilename.substring(0, underscoreIndex);
+        if (/^\d+$/.test(prefix)) {
+          downloadName = safeFilename.substring(underscoreIndex + 1);
+        }
+      }
+
+      // Set headers for download with original filename
+      reply.header('Content-Disposition', `attachment; filename="${downloadName}"`);
       reply.header('Content-Type', 'application/octet-stream');
 
       // Stream the file
@@ -160,8 +194,8 @@ export async function conversionRoutes(fastify: FastifyInstance) {
    */
   fastify.get('/formats', async () => {
     return {
-      input: ['obj', 'fbx', 'gltf', 'glb', 'dxf', 'dwg'],
-      output: ['obj', 'fbx', 'gltf', 'glb', 'dxf', 'dwg'],
+      input: ['obj', 'stl', 'fbx', 'ply', 'gltf', 'glb', 'dae', '3ds', 'dxf', 'dwg'],
+      output: ['obj', 'stl', 'fbx', 'ply', 'gltf', 'glb', 'dae', '3ds', 'dxf', 'dwg'],
     };
   });
 }

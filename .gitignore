@@ -16,3 +16,6 @@ node_modules/
 
 # common hidden files
 .DS_Store
+
+
+ignoredByGit/

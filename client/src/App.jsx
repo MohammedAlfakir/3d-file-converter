@@ -120,6 +120,7 @@ function App() {
       assimp: { label: "⚡ Assimp", color: "#10b981" },
       blender: { label: "🎨 Blender", color: "#3b82f6" },
       oda: { label: "📐 ODA", color: "#8b5cf6" },
+      aps: { label: "☁️ APS", color: "#ec4899" },
       pipeline: { label: "🔗 Pipeline", color: "#f59e0b" },
     };
     return badges[tool] || { label: tool, color: "#6b7280" };
@@ -165,11 +166,6 @@ function App() {
       <h1 className="title">3D File Converter</h1>
       <p className="subtitle">
         Convert your 3D models to standard formats
-        {serverInfo && (
-          <span style={{ fontSize: "0.75rem", opacity: 0.7, display: "block", marginTop: "4px" }}>
-            Powered by Blender {serverInfo.tools?.blender} • Assimp • ODA
-          </span>
-        )}
       </p>
 
       <div className="glass-card">
@@ -184,7 +180,7 @@ function App() {
             id="fileInput"
             style={{ display: "none" }}
             onChange={handleFileChange}
-            accept=".obj,.fbx,.gltf,.glb,.dxf,.dwg"
+            accept=".obj,.stl,.fbx,.ply,.gltf,.glb,.dae,.3ds,.dxf,.dwg"
           />
 
           <div className="plus-icon-circle">+</div>
@@ -202,7 +198,7 @@ function App() {
             <div>
               <p className="drop-text">Drop files here</p>
               <p className="drop-subtext">
-                Supports OBJ, FBX, GLTF, GLB, DXF, DWG
+                OBJ, STL, FBX, PLY, GLTF, GLB, DAE, 3DS, DXF, DWG
               </p>
             </div>
           )}
@@ -227,12 +223,20 @@ function App() {
               className="select-format"
               onClick={e => e.stopPropagation()}
             >
-              <option value="glb">GLB (Binary glTF)</option>
-              <option value="gltf">glTF (JSON)</option>
-              <option value="obj">OBJ</option>
-              <option value="fbx">FBX</option>
-              <option value="dxf">DXF (CAD)</option>
-              <option value="dwg">DWG (AutoCAD)</option>
+              <optgroup label="Mesh Formats">
+                <option value="glb">GLB (Binary glTF)</option>
+                <option value="gltf">glTF (JSON)</option>
+                <option value="obj">OBJ (Wavefront)</option>
+                <option value="stl">STL (Stereolithography)</option>
+                <option value="fbx">FBX (Autodesk)</option>
+                <option value="ply">PLY (Stanford)</option>
+                <option value="dae">DAE (Collada)</option>
+                <option value="3ds">3DS (3D Studio)</option>
+              </optgroup>
+              <optgroup label="CAD Formats">
+                <option value="dxf">DXF (Drawing Exchange)</option>
+                <option value="dwg">DWG (AutoCAD)</option>
+              </optgroup>
             </select>
           </div>
 
