@@ -36,7 +36,7 @@ body {
 
 #root {
   width: 100%;
-  max-width: 900px;
+  max-width: 950px;
   padding: 2rem;
   box-sizing: border-box;
 }
@@ -280,4 +280,63 @@ body {
 
 .toast.exit {
   animation: slideOut 0.3s ease-in forwards;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  #root {
+    padding: 1rem;
+  }
+
+  .title {
+    font-size: 2rem;
+  }
+
+  .glass-card {
+    padding: 1.5rem;
+  }
+
+  .control-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 1rem;
+  }
+
+  .input-group {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+  }
+
+  .select-format {
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .btn-group {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .drop-zone {
+    padding: 2rem 1rem;
+    min-height: 150px;
+  }
+
+  .toast-container {
+    left: 20px;
+    right: 20px;
+    width: auto;
+  }
+
+  .toast {
+    min-width: auto;
+    width: 100%;
+    box-sizing: border-box;
+  }
 }

@@ -3,6 +3,19 @@ import React, { useState, useEffect } from "react";
 // API base URL - uses environment variable or defaults to same origin
 const API_URL = import.meta.env.VITE_API_URL || "";
 
+const SUPPORTED_FORMATS = [
+  "glb",
+  "gltf",
+  "obj",
+  "stl",
+  "fbx",
+  "ply",
+  "dae",
+  "3ds",
+  "dxf",
+  "dwg",
+];
+
 function App() {
   const [file, setFile] = useState(null);
   const [format, setFormat] = useState("glb");
@@ -42,14 +55,29 @@ function App() {
     }
   }, [status]);
 
+  const handleNewFile = uploadedFile => {
+    setFile(uploadedFile);
+    setStatus("idle");
+    setErrorMessage("");
+    setDownloadUrl(null);
+    setConversionInfo(null);
+    setIsExiting(false);
+
+    const fileExt = uploadedFile.name.split(".").pop().toLowerCase();
+
+    // Auto-switch format if it matches the uploaded file
+    if (format === fileExt) {
+      const currentIndex = SUPPORTED_FORMATS.indexOf(format);
+      // Find next available format (should be just the next one, but safety check)
+      const nextFormat =
+        SUPPORTED_FORMATS[(currentIndex + 1) % SUPPORTED_FORMATS.length];
+      setFormat(nextFormat);
+    }
+  };
+
   const handleFileChange = e => {
     if (e.target.files && e.target.files[0]) {
-      setFile(e.target.files[0]);
-      setStatus("idle");
-      setErrorMessage("");
-      setDownloadUrl(null);
-      setConversionInfo(null);
-      setIsExiting(false);
+      handleNewFile(e.target.files[0]);
     }
   };
 
@@ -57,12 +85,7 @@ function App() {
     e.preventDefault();
     e.stopPropagation();
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      setFile(e.dataTransfer.files[0]);
-      setStatus("idle");
-      setErrorMessage("");
-      setDownloadUrl(null);
-      setConversionInfo(null);
-      setIsExiting(false);
+      handleNewFile(e.dataTransfer.files[0]);
     }
   };
 
@@ -80,12 +103,13 @@ function App() {
     setStatus("converting");
     setErrorMessage("");
     setConversionInfo(null);
+    setDownloadUrl(null);
     setIsExiting(false);
 
     const formData = new FormData();
     formData.append("file", file);
     formData.append("format", format);
-    
+
     // Debug: Log what we're sending
     console.log("Converting with format:", format);
     console.log("FormData format:", formData.get("format"));
@@ -115,7 +139,7 @@ function App() {
     }
   };
 
-  const getToolBadge = (tool) => {
+  const getToolBadge = tool => {
     const badges = {
       assimp: { label: "⚡ Assimp", color: "#10b981" },
       blender: { label: "🎨 Blender", color: "#3b82f6" },
@@ -138,13 +162,15 @@ function App() {
                 {conversionInfo && (
                   <>
                     Converted in {conversionInfo.duration}ms using{" "}
-                    <span style={{ 
-                      background: getToolBadge(conversionInfo.tool).color,
-                      padding: "2px 6px",
-                      borderRadius: "4px",
-                      color: "white",
-                      fontSize: "0.8rem"
-                    }}>
+                    <span
+                      style={{
+                        background: getToolBadge(conversionInfo.tool).color,
+                        padding: "2px 6px",
+                        borderRadius: "4px",
+                        color: "white",
+                        fontSize: "0.8rem",
+                      }}
+                    >
                       {getToolBadge(conversionInfo.tool).label}
                     </span>
                   </>
@@ -164,9 +190,7 @@ function App() {
       </div>
 
       <h1 className="title">3D File Converter</h1>
-      <p className="subtitle">
-        Convert your 3D models to standard formats
-      </p>
+      <p className="subtitle">Convert your 3D models to standard formats</p>
 
       <div className="glass-card">
         <div
@@ -219,23 +243,77 @@ function App() {
             </label>
             <select
               value={format}
-              onChange={e => setFormat(e.target.value)}
+              onChange={e => {
+                setFormat(e.target.value);
+                setStatus("idle");
+                setDownloadUrl(null);
+              }}
               className="select-format"
               onClick={e => e.stopPropagation()}
             >
               <optgroup label="Mesh Formats">
-                <option value="glb">GLB (Binary glTF)</option>
-                <option value="gltf">glTF (JSON)</option>
-                <option value="obj">OBJ (Wavefront)</option>
-                <option value="stl">STL (Stereolithography)</option>
-                <option value="fbx">FBX (Autodesk)</option>
-                <option value="ply">PLY (Stanford)</option>
-                <option value="dae">DAE (Collada)</option>
-                <option value="3ds">3DS (3D Studio)</option>
+                <option
+                  value="glb"
+                  disabled={file && file.name.toLowerCase().endsWith(".glb")}
+                >
+                  GLB (Binary glTF)
+                </option>
+                <option
+                  value="gltf"
+                  disabled={file && file.name.toLowerCase().endsWith(".gltf")}
+                >
+                  glTF (JSON)
+                </option>
+                <option
+                  value="obj"
+                  disabled={file && file.name.toLowerCase().endsWith(".obj")}
+                >
+                  OBJ (Wavefront)
+                </option>
+                <option
+                  value="stl"
+                  disabled={file && file.name.toLowerCase().endsWith(".stl")}
+                >
+                  STL (Stereolithography)
+                </option>
+                <option
+                  value="fbx"
+                  disabled={file && file.name.toLowerCase().endsWith(".fbx")}
+                >
+                  FBX (Autodesk)
+                </option>
+                <option
+                  value="ply"
+                  disabled={file && file.name.toLowerCase().endsWith(".ply")}
+                >
+                  PLY (Stanford)
+                </option>
+                <option
+                  value="dae"
+                  disabled={file && file.name.toLowerCase().endsWith(".dae")}
+                >
+                  DAE (Collada)
+                </option>
+                <option
+                  value="3ds"
+                  disabled={file && file.name.toLowerCase().endsWith(".3ds")}
+                >
+                  3DS (3D Studio)
+                </option>
               </optgroup>
               <optgroup label="CAD Formats">
-                <option value="dxf">DXF (Drawing Exchange)</option>
-                <option value="dwg">DWG (AutoCAD)</option>
+                <option
+                  value="dxf"
+                  disabled={file && file.name.toLowerCase().endsWith(".dxf")}
+                >
+                  DXF (Drawing Exchange)
+                </option>
+                <option
+                  value="dwg"
+                  disabled={file && file.name.toLowerCase().endsWith(".dwg")}
+                >
+                  DWG (AutoCAD)
+                </option>
               </optgroup>
             </select>
           </div>
