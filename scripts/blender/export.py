@@ -50,11 +50,20 @@ print(f"[Blender] Output: {output_file_path}")
 #--------------------------------------------------------------------
 
 if input_file_format == "obj":
+  # Import OBJ - missing MTL warnings are normal and don't prevent import
   bpy.ops.wm.obj_import(filepath=input_file_path)
+elif input_file_format == "stl":
+  bpy.ops.wm.stl_import(filepath=input_file_path)
+elif input_file_format == "ply":
+  bpy.ops.wm.ply_import(filepath=input_file_path)
 elif input_file_format == "fbx":
   bpy.ops.import_scene.fbx(filepath=input_file_path)
 elif input_file_format in ("gltf", "glb"):
   bpy.ops.import_scene.gltf(filepath=input_file_path)
+elif input_file_format == "dae":
+  bpy.ops.wm.collada_import(filepath=input_file_path)
+elif input_file_format == "3ds":
+  bpy.ops.import_scene.autodesk_3ds(filepath=input_file_path)
 elif input_file_format == "dxf":
   # Check if it's a binary DXF (not supported by Blender)
   with open(input_file_path, 'rb') as f:
@@ -95,10 +104,19 @@ if output_file_format == "fbx":
 elif output_file_format == "obj":
   # Blender 4.0 uses wm.obj_export instead of export_scene.obj
   bpy.ops.wm.obj_export(filepath=output_file_path)
+elif output_file_format == "stl":
+  # Blender 4.0 uses export_mesh.stl (not wm.stl_export)
+  bpy.ops.export_mesh.stl(filepath=output_file_path, use_selection=False, ascii=False)
+elif output_file_format == "ply":
+  bpy.ops.wm.ply_export(filepath=output_file_path)
 elif output_file_format == "glb":
   bpy.ops.export_scene.gltf(filepath=output_file_path, export_format="GLB")
 elif output_file_format == "gltf":
   bpy.ops.export_scene.gltf(filepath=output_file_path, export_format="GLTF_EMBEDDED")
+elif output_file_format == "dae":
+  bpy.ops.wm.collada_export(filepath=output_file_path)
+elif output_file_format == "3ds":
+  bpy.ops.export_scene.autodesk_3ds(filepath=output_file_path)
 elif output_file_format == "dxf":
   bpy.ops.export.dxf(
     filepath=output_file_path,

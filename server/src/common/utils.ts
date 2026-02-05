@@ -5,7 +5,7 @@
 import path from 'path';
 import crypto from 'crypto';
 import fs from 'fs';
-import { SIMPLE_MESH_FORMATS, CAD_FORMATS } from './constants';
+import { SIMPLE_MESH_FORMATS, CAD_FORMATS, STEP_FORMATS, IGES_FORMATS, BREP_CAD_FORMATS } from './constants';
 
 /**
  * Get file extension without dot, lowercase
@@ -102,4 +102,25 @@ export function isBinaryDxf(filePath: string): boolean {
  */
 export function isDxfFile(filePath: string): boolean {
   return path.extname(filePath).toLowerCase() === '.dxf';
+}
+
+/**
+ * Check if format is STEP/STP
+ */
+export function isStepFormat(format: string): boolean {
+  return (STEP_FORMATS as readonly string[]).includes(format.toLowerCase());
+}
+
+/**
+ * Check if format is IGES/IGS
+ */
+export function isIgesFormat(format: string): boolean {
+  return (IGES_FORMATS as readonly string[]).includes(format.toLowerCase());
+}
+
+/**
+ * Check if format is B-Rep CAD (STEP, IGES)
+ */
+export function isBrepCadFormat(format: string): boolean {
+  return (BREP_CAD_FORMATS as readonly string[]).includes(format.toLowerCase());
 }

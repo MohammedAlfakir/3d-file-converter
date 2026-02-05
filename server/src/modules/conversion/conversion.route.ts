@@ -194,8 +194,8 @@ export async function conversionRoutes(fastify: FastifyInstance) {
    */
   fastify.get('/formats', async () => {
     return {
-      input: ['obj', 'stl', 'fbx', 'ply', 'gltf', 'glb', 'dae', '3ds', 'dxf', 'dwg'],
-      output: ['obj', 'stl', 'fbx', 'ply', 'gltf', 'glb', 'dae', '3ds', 'dxf', 'dwg'],
+      input: [...SUPPORTED_INPUT_FORMATS],
+      output: [...SUPPORTED_OUTPUT_FORMATS],
     };
   });
 }

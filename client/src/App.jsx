@@ -14,6 +14,10 @@ const SUPPORTED_FORMATS = [
   "3ds",
   "dxf",
   "dwg",
+  "step",
+  "stp",
+  "iges",
+  "igs",
 ];
 
 const MAX_FILES = 100;
@@ -342,7 +346,7 @@ function App() {
             <p className="drop-subtext">
               {files.length > 0 
                 ? `${files.length} file${files.length > 1 ? "s" : ""} in queue (max ${MAX_FILES})`
-                : "OBJ, STL, FBX, PLY, GLTF, GLB, DAE, 3DS, DXF, DWG"
+                : "OBJ, STL, FBX, PLY, GLTF, GLB, DAE, 3DS, DXF, DWG, STEP, STP, IGES, IGS"
               }
             </p>
           </div>
@@ -484,6 +488,10 @@ function App() {
               <optgroup label="CAD Formats">
                 <option value="dxf">DXF</option>
                 <option value="dwg">DWG</option>
+                <option value="step">STEP</option>
+                <option value="stp">STP</option>
+                <option value="iges">IGES</option>
+                <option value="igs">IGS</option>
               </optgroup>
             </select>
           </div>

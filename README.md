@@ -18,7 +18,7 @@ A powerful 3D file conversion service with support for CAD formats (DWG, DXF) an
 │  │                    Conversion Service                        │    │
 │  │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌──────────────┐   │    │
 │  │  │ Blender │  │ Assimp  │  │ FreeCAD │  │ Autodesk APS │   │    │
-│  │  │  4.0.2  │  │  5.3.1  │  │  0.21   │  │    (Cloud)   │   │    │
+│  │  │  4.0.2  │  │  5.3.1  │  │  0.20   │  │    (Cloud)   │   │    │
 │  │  └─────────┘  └─────────┘  └─────────┘  └──────────────┘   │    │
 │  └─────────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────────┘
@@ -366,7 +366,7 @@ This flowchart shows **every possible conversion path** in the system. The backe
 | **Backend** | Fastify + TypeScript | API server, request handling |
 | **Blender 4.0.2** | Open-source 3D software | Mesh conversion, CAD import |
 | **Assimp 5.3.1** | Asset Import Library | Fast mesh-to-mesh conversion |
-| **FreeCAD 0.21** | Open-source CAD | CAD format fallback |
+| **FreeCAD 0.20** | Open-source CAD | STEP/IGES conversion, CAD fallback |
 | **Autodesk APS** | Cloud API | DWG/DXF with ACIS 3D solids |
 | **Docker** | Containerization | Consistent runtime environment |
 
@@ -450,6 +450,8 @@ curl -X POST "http://localhost:3001/api/convert" \
 |--------|-----------|------|-----------|
 | AutoCAD Drawing | `.dwg` | CAD | Autodesk APS |
 | Drawing Exchange | `.dxf` | CAD | Autodesk APS |
+| STEP | `.step`, `.stp` | CAD (B-Rep) | FreeCAD |
+| IGES | `.iges`, `.igs` | CAD (B-Rep) | FreeCAD |
 | Wavefront OBJ | `.obj` | Mesh | Assimp/Blender |
 | Stereolithography | `.stl` | Mesh | Assimp/Blender |
 | Autodesk FBX | `.fbx` | Mesh | Assimp/Blender |
@@ -468,6 +470,43 @@ curl -X POST "http://localhost:3001/api/convert" \
 | glTF Text | `.gltf` | Mesh |
 | glTF Binary | `.glb` | Mesh |
 | Drawing Exchange | `.dxf` | CAD (from mesh only) |
+| STEP | `.step`, `.stp` | CAD (B-Rep) |
+| IGES | `.iges`, `.igs` | CAD (B-Rep) |
+
+### STEP/IGES Format Notes
+
+**STEP** (Standard for the Exchange of Product Data) and **IGES** (Initial Graphics Exchange Specification) are B-Rep (Boundary Representation) CAD formats that store mathematical curves and surfaces.
+
+#### Conversions Supported:
+| From | To | Pipeline |
+|------|-----|----------|
+| OBJ, STL, FBX, GLTF → | STEP/IGES | Blender → STL → FreeCAD (solidification) |
+| STEP → | Mesh formats | FreeCAD → STL → Blender/Assimp |
+| STEP → | DXF | FreeCAD direct |
+| STEP → | DWG | FreeCAD → DXF → ODA |
+| STEP ↔ | IGES | FreeCAD direct (CAD-to-CAD) |
+| DWG/DXF → | STEP | APS → OBJ → Blender → FreeCAD |
+
+#### ⚠️ Mesh → STEP/STP Quality Note
+
+When converting mesh formats (OBJ, STL, FBX) to STEP/STP:
+- **Curved surfaces will appear "faceted"** (like a disco ball on spheres)
+- This is a fundamental limitation of mesh-to-CAD conversion
+- Meshes store triangles, while STEP stores mathematical curves
+- The output is a valid **faceted solid** suitable for CAD software
+
+#### ✅ Quality Preservation Features
+
+The mesh-to-STEP pipeline uses optimized settings to preserve maximum geometry:
+
+| Feature | Setting | Description |
+|---------|---------|-------------|
+| **Gentle Mesh Repair** | `aggressive=False` | Only removes exact duplicate points, preserves all geometry |
+| **High Precision Tolerance** | `0.001mm` | Preserves fine geometric details during shape conversion |
+| **Skip Face Merging** | `merge_faces=False` | Keeps all original faces, no coplanar face merging |
+| **Quality Reporting** | Automatic | Shows face count before/after: "627/1274 faces preserved (49.2%)" |
+
+> **Note:** Some face reduction is normal during mesh → solid conversion as triangles are converted to B-Rep faces.
 
 ---
 

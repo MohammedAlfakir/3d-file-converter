@@ -11,11 +11,18 @@
  * 
  * 4. Any format → DXF: Use Blender directly
  * 
- * 5. Simple Mesh → Simple Mesh: Assimp → Blender → FreeCAD → APS (fallback chain)
+ * 5. STEP/IGES Routing (FreeCAD-based):
+ *    - STEP/IGES → STEP/IGES: FreeCAD direct CAD-to-CAD
+ *    - STEP/IGES → DXF: FreeCAD direct export
+ *    - STEP/IGES → DWG: FreeCAD → DXF → ODA
+ *    - STEP/IGES → Mesh: FreeCAD → STL → Blender/Assimp
+ *    - Any → STEP/IGES: Blender → STL → FreeCAD (solidification)
  * 
- * 6. CAD formats: Blender → FreeCAD → APS (fallback chain)
+ * 6. Simple Mesh → Simple Mesh: Assimp → Blender → FreeCAD → APS (fallback chain)
  * 
- * 7. Fallback: Try full chain for any other formats
+ * 7. CAD formats: Blender → FreeCAD → APS (fallback chain)
+ * 
+ * 8. Fallback: Try full chain for any other formats
  * 
  * This allows converting ANY format to ANY format with maximum compatibility.
  */
@@ -28,6 +35,9 @@ import {
   odaConvert,
   convertWithFreecad,
   canFreecadHandle,
+  canFreecadExportCad,
+  convertMeshToStep,
+  convertCadToCad,
   apsConvert,
   isApsAvailable
 } from './providers';
@@ -36,6 +46,9 @@ import {
   isCadFormat, 
   isDwgFormat, 
   isDxfFile,
+  isStepFormat,
+  isIgesFormat,
+  isBrepCadFormat,
   getExtension,
   generateOutputFilename 
 } from '../../common/utils';
@@ -283,7 +296,187 @@ export async function convertFile(
   }
 
   // =====================================================
-  // 5. SIMPLE MESH → SIMPLE MESH: Assimp → Blender → FreeCAD → APS
+  // 5. STEP/STP/IGES ROUTING (FreeCAD-based)
+  // =====================================================
+  const isStepOutput = isStepFormat(normalizedOutputFormat);
+  const isIgesOutput = isIgesFormat(normalizedOutputFormat);
+  const isStepInput = isStepFormat(inputFormat);
+  const isIgesInput = isIgesFormat(inputFormat);
+  
+  // 5a. STEP/IGES INPUT → Any format
+  if (isStepInput || isIgesInput) {
+    log(`Route: STEP/IGES input → ${normalizedOutputFormat.toUpperCase()}`);
+    
+    // STEP/IGES → STEP/IGES (CAD-to-CAD via FreeCAD)
+    if (isStepOutput || isIgesOutput) {
+      log(`CAD-to-CAD conversion: ${inputFormat.toUpperCase()} → ${normalizedOutputFormat.toUpperCase()}`);
+      try {
+        await convertCadToCad(inputPath, outputPath);
+        log(`CAD-to-CAD conversion successful`, 'success');
+        return {
+          outputPath,
+          tool: 'pipeline',
+          duration: Date.now() - startTime
+        };
+      } catch (err) {
+        log(`CAD-to-CAD conversion failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
+        throw new ConversionError(
+          `Failed to convert ${inputFormat.toUpperCase()} to ${normalizedOutputFormat.toUpperCase()}`,
+          `FreeCAD CAD-to-CAD conversion failed. Error: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+    
+    // STEP/IGES → DXF (FreeCAD direct)
+    if ((normalizedOutputFormat as string) === 'dxf') {
+      log(`STEP/IGES → DXF via FreeCAD...`);
+      try {
+        await convertCadToCad(inputPath, outputPath);
+        log(`STEP/IGES → DXF successful`, 'success');
+        return {
+          outputPath,
+          tool: 'pipeline',
+          duration: Date.now() - startTime
+        };
+      } catch (err) {
+        log(`FreeCAD DXF export failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
+        throw new ConversionError(
+          `Failed to convert ${inputFormat.toUpperCase()} to DXF`,
+          `FreeCAD could not export to DXF. Error: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+    
+    // STEP/IGES → DWG (FreeCAD → DXF → ODA)
+    if (normalizedOutputFormat === 'dwg') {
+      log(`STEP/IGES → DWG via FreeCAD + ODA...`);
+      const tempDxfPath = path.join(inputDir, `temp_${Date.now()}.dxf`);
+      try {
+        // Step 1: STEP/IGES → DXF via FreeCAD
+        log(`Step 1: ${inputFormat.toUpperCase()} → DXF via FreeCAD...`);
+        await convertCadToCad(inputPath, tempDxfPath);
+        log(`Step 1 complete`, 'success');
+        
+        // Step 2: DXF → DWG via ODA
+        log(`Step 2: DXF → DWG via ODA...`);
+        const odaOutputPath = await odaConvert(tempDxfPath, 'DWG');
+        if (odaOutputPath !== outputPath) {
+          await fs.move(odaOutputPath, outputPath, { overwrite: true });
+        }
+        log(`Step 2 complete`, 'success');
+        
+        return {
+          outputPath,
+          tool: 'pipeline',
+          duration: Date.now() - startTime
+        };
+      } catch (err) {
+        log(`STEP/IGES → DWG failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
+        throw new ConversionError(
+          `Failed to convert ${inputFormat.toUpperCase()} to DWG`,
+          `Error: ${err instanceof Error ? err.message : String(err)}`
+        );
+      } finally {
+        await fs.remove(tempDxfPath).catch(() => {});
+      }
+    }
+    
+    // STEP/IGES → Mesh formats (FreeCAD → STL → Blender/Assimp)
+    log(`STEP/IGES → mesh format via FreeCAD...`);
+    const tempStlPath = path.join(inputDir, `temp_${Date.now()}.stl`);
+    try {
+      // Step 1: Convert to STL via existing FreeCAD exporter
+      log(`Step 1: ${inputFormat.toUpperCase()} → STL via FreeCAD...`);
+      const freecadResult = await convertWithFreecad(inputPath, 'stl');
+      await fs.move(freecadResult.outputPath, tempStlPath, { overwrite: true });
+      log(`Step 1 complete`, 'success');
+      
+      // Step 2: STL → final format
+      if (normalizedOutputFormat === 'stl') {
+        await fs.move(tempStlPath, outputPath, { overwrite: true });
+      } else {
+        log(`Step 2: STL → ${normalizedOutputFormat.toUpperCase()}...`);
+        await convertWithFullFallback(tempStlPath, outputPath);
+        log(`Step 2 complete`, 'success');
+      }
+      
+      return {
+        outputPath,
+        tool: 'pipeline',
+        duration: Date.now() - startTime
+      };
+    } catch (err) {
+      log(`STEP/IGES → mesh failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
+      throw new ConversionError(
+        `Failed to convert ${inputFormat.toUpperCase()} to ${normalizedOutputFormat.toUpperCase()}`,
+        `Error: ${err instanceof Error ? err.message : String(err)}`
+      );
+    } finally {
+      await fs.remove(tempStlPath).catch(() => {});
+    }
+  }
+  
+  // 5b. Any format → STEP/IGES OUTPUT
+  if (isStepOutput || isIgesOutput) {
+    log(`Route: Any → ${normalizedOutputFormat.toUpperCase()}`);
+    
+    const tempStlPath = path.join(inputDir, `temp_${Date.now()}.stl`);
+    
+    try {
+      // Step 1: Convert to clean STL via Blender
+      if ((inputFormat as string) === 'dwg' || (inputFormat as string) === 'dxf') {
+        // DWG/DXF → OBJ via APS, then → STL
+        log(`Step 1: DWG/DXF → OBJ via APS, then → STL...`);
+        if (!isApsAvailable()) {
+          throw new ConversionError(
+            'DWG/DXF to STEP conversion requires Autodesk APS',
+            'Configure APS_CLIENT_ID and APS_CLIENT_SECRET environment variables.'
+          );
+        }
+        const tempObjPath = path.join(inputDir, `temp_aps_${Date.now()}.obj`);
+        await apsConvert(inputPath, tempObjPath, { outputFormat: 'obj' });
+        await blenderConvert(tempObjPath, tempStlPath);
+        await fs.remove(tempObjPath).catch(() => {});
+        log(`Step 1 complete`, 'success');
+      } else {
+        // Mesh format → STL via Blender (sanitizes mesh)
+        log(`Step 1: Blender → STL (sanitized)...`);
+        await blenderConvert(inputPath, tempStlPath);
+        log(`Step 1 complete`, 'success');
+      }
+      
+      // Step 2: STL → STEP/IGES via FreeCAD
+      if (isStepOutput) {
+        log(`Step 2: STL → STEP via FreeCAD (solidification)...`);
+        await convertMeshToStep(tempStlPath, outputPath);
+      } else {
+        // For IGES: STL → STEP → IGES
+        log(`Step 2: STL → STEP → IGES via FreeCAD...`);
+        const tempStepPath = path.join(inputDir, `temp_step_${Date.now()}.step`);
+        await convertMeshToStep(tempStlPath, tempStepPath);
+        await convertCadToCad(tempStepPath, outputPath);
+        await fs.remove(tempStepPath).catch(() => {});
+      }
+      log(`Step 2 complete`, 'success');
+      
+      return {
+        outputPath,
+        tool: 'pipeline',
+        duration: Date.now() - startTime
+      };
+    } catch (err) {
+      log(`Mesh → ${normalizedOutputFormat.toUpperCase()} failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
+      throw new ConversionError(
+        `Failed to convert ${inputFormat.toUpperCase()} to ${normalizedOutputFormat.toUpperCase()}`,
+        `Error: ${err instanceof Error ? err.message : String(err)}`
+      );
+    } finally {
+      await fs.remove(tempStlPath).catch(() => {});
+    }
+  }
+
+  // =====================================================
+  // 6. SIMPLE MESH → SIMPLE MESH: Assimp → Blender → FreeCAD → APS
   // =====================================================
   if (isSimpleMesh(inputFormat) && isSimpleMesh(normalizedOutputFormat)) {
     log(`Route: Simple mesh → Simple mesh`);
@@ -299,7 +492,7 @@ export async function convertFile(
   }
 
   // =====================================================
-  // 6. CAD FORMATS: Blender → FreeCAD → APS
+  // 7. CAD FORMATS: Blender → FreeCAD → APS
   // =====================================================
   if (isCadFormat(inputFormat) || isCadFormat(normalizedOutputFormat)) {
     log(`Route: CAD format conversion`);
@@ -412,7 +605,7 @@ export async function convertFile(
   }
 
   // =====================================================
-  // 7. FALLBACK - Try full chain for any other formats
+  // 8. FALLBACK - Try full chain for any other formats
   // =====================================================
   log(`Route: Fallback chain`);
   tool = await convertWithFullFallback(inputPath, outputPath);

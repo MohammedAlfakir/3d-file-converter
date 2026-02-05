@@ -3,12 +3,17 @@
  */
 
 // Supported file formats
-export const SUPPORTED_INPUT_FORMATS = ['obj', 'stl', 'fbx', 'ply', 'gltf', 'glb', 'dae', '3ds', 'dxf', 'dwg'] as const;
-export const SUPPORTED_OUTPUT_FORMATS = ['obj', 'stl', 'fbx', 'ply', 'gltf', 'glb', 'dae', '3ds', 'dxf', 'dwg'] as const;
+export const SUPPORTED_INPUT_FORMATS = ['obj', 'stl', 'fbx', 'ply', 'gltf', 'glb', 'dae', '3ds', 'dxf', 'dwg', 'step', 'stp', 'iges', 'igs'] as const;
+export const SUPPORTED_OUTPUT_FORMATS = ['obj', 'stl', 'fbx', 'ply', 'gltf', 'glb', 'dae', '3ds', 'dxf', 'dwg', 'step', 'stp', 'iges', 'igs'] as const;
 
 // Format categories for routing decisions
 export const SIMPLE_MESH_FORMATS = ['obj', 'stl', 'fbx', 'ply', 'glb', 'gltf', 'dae', '3ds'] as const;
 export const CAD_FORMATS = ['dxf', 'dwg', 'step', 'iges', 'stp', 'igs'] as const;
+
+// STEP/IGES formats (B-Rep CAD formats handled by FreeCAD)
+export const STEP_FORMATS = ['step', 'stp'] as const;
+export const IGES_FORMATS = ['iges', 'igs'] as const;
+export const BREP_CAD_FORMATS = ['step', 'stp', 'iges', 'igs'] as const;
 
 // File size limits
 export const MAX_FILE_SIZE_MB = 100;
@@ -30,6 +35,10 @@ export const MIME_TYPES: Record<string, string> = {
   '3ds': 'application/x-3ds',
   dxf: 'application/dxf',
   dwg: 'application/acad',
+  step: 'application/step',
+  stp: 'application/step',
+  iges: 'application/iges',
+  igs: 'application/iges',
 };
 
 // TypeScript types
