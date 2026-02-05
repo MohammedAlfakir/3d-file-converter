@@ -11,6 +11,7 @@ import fastifyStatic from '@fastify/static';
 import config from './config/env';
 import { AppError } from './common/errors';
 import { conversionRoutes } from './modules/conversion';
+import { batchRoutes } from './modules/batch';
 import { healthRoutes } from './modules/health';
 import { ensureUploadDir, startCleanupJob } from './modules/files';
 import { rateLimitPlugin } from './plugins';
@@ -48,7 +49,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(multipart, {
     limits: {
       fileSize: config.maxFileSize,
-      files: 1,
+      files: 100, // Allow up to 100 files for batch upload
     },
   });
 
@@ -89,6 +90,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Register routes
   await app.register(healthRoutes, { prefix: '' });
   await app.register(conversionRoutes, { prefix: '/api' });
+  await app.register(batchRoutes, { prefix: '/api' });
 
   // Root redirect
   app.get('/', async (_request, reply) => {
