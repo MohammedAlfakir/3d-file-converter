@@ -29,6 +29,7 @@
 
 import path from 'path';
 import fs from 'fs-extra';
+import { readFileSync } from 'fs';
 import { 
   blenderConvert, 
   assimpConvert,
@@ -39,7 +40,8 @@ import {
   convertMeshToStep,
   convertCadToCad,
   apsConvert,
-  isApsAvailable
+  isApsAvailable,
+  getHierarchyForObj
 } from './providers';
 import { 
   isSimpleMesh, 
@@ -65,6 +67,34 @@ interface ConversionResult {
   outputPath: string;
   tool: 'assimp' | 'blender' | 'oda' | 'pipeline' | 'aps';
   duration: number;
+}
+
+/**
+ * Check if an OBJ file contains colon-notation groups (e.g., "g Obj.195:1")
+ * These indicate parent-child relationships that Blender can preserve
+ */
+function objHasColonNotationGroups(objFilePath: string): boolean {
+  try {
+    // Read first 50KB of the file to check for colon notation
+    const buffer = Buffer.alloc(50 * 1024);
+    const fd = require('fs').openSync(objFilePath, 'r');
+    const bytesRead = require('fs').readSync(fd, buffer, 0, buffer.length, 0);
+    require('fs').closeSync(fd);
+    
+    const content = buffer.toString('utf8', 0, bytesRead);
+    // Check for patterns like "g Obj.123:1" or "g ComponentName_123:1"
+    const colonPattern = /^g\s+\S+:\d+$/m;
+    const hasColonNotation = colonPattern.test(content);
+    
+    if (hasColonNotation) {
+      log(`OBJ file has colon-notation groups (e.g., Obj.XXX:1) - prefer Blender for hierarchy`);
+    }
+    
+    return hasColonNotation;
+  } catch (err) {
+    // If we can't read the file, assume no special notation
+    return false;
+  }
 }
 
 // =====================================================
@@ -621,6 +651,14 @@ export async function convertFile(
 /**
  * Full fallback chain: Assimp → Blender → FreeCAD → APS
  * Tries each converter in order until one succeeds
+ * 
+ * HIERARCHY PRESERVATION:
+ * When converting OBJ files from APS that have hierarchy data,
+ * we skip Assimp and go directly to Blender so parent-child
+ * relationships can be reconstructed in GLB/GLTF output.
+ * 
+ * Also detects OBJ files with colon-notation groups (e.g., "g Obj.195:1")
+ * which indicate parent-child relationships that Blender can preserve.
  */
 async function convertWithFullFallback(
   inputPath: string,
@@ -632,8 +670,30 @@ async function convertWithFullFallback(
 
   log(`Fallback chain: ${inputFormat.toUpperCase()} → ${outputFormat.toUpperCase()}`);
 
+  // Check if we have APS hierarchy data for this OBJ file
+  // If so, we MUST use Blender to preserve parent-child relationships in GLB/GLTF
+  const hasApsHierarchyData = inputFormat === 'obj' && 
+                           (outputFormat === 'glb' || outputFormat === 'gltf') &&
+                           getHierarchyForObj(inputPath) !== undefined;
+  
+  // Also check if OBJ file has colon-notation groups (e.g., "g Obj.195:1")
+  // These indicate parent-child relationships that Blender can group together
+  const hasColonNotation = inputFormat === 'obj' && 
+                           (outputFormat === 'glb' || outputFormat === 'gltf') &&
+                           !hasApsHierarchyData && // Only check file if no APS data
+                           objHasColonNotationGroups(inputPath);
+  
+  const preferBlenderForHierarchy = hasApsHierarchyData || hasColonNotation;
+  
+  if (hasApsHierarchyData) {
+    log(`OBJ has APS hierarchy data - using Blender for GLB to preserve parent-child relationships`);
+  } else if (hasColonNotation) {
+    log(`OBJ has colon-notation groups - using Blender for GLB to create hierarchy`);
+  }
+
   // 1. Try Assimp first (fast, good for simple meshes)
-  if (isSimpleMesh(inputFormat) && isSimpleMesh(outputFormat)) {
+  // Skip Assimp if we need hierarchy preservation
+  if (isSimpleMesh(inputFormat) && isSimpleMesh(outputFormat) && !preferBlenderForHierarchy) {
     try {
       log(`Trying Assimp...`);
       await assimpConvert(inputPath, outputPath);

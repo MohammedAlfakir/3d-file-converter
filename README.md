@@ -106,6 +106,30 @@ DWG is a **proprietary format** that requires AutoCAD. Neither APS nor any open-
 | `model.obj` → `model.dwg` | ❌ Not possible (proprietary) |
 | `model.dxf` → `model.dwg` | ❌ Not possible (use AutoCAD) |
 
+#### OBJ Name Rehydration
+
+When APS converts DWG/DXF files to OBJ, it originally outputs generic object IDs like `g Obj.148` instead of meaningful names. We've implemented **automatic name rehydration** that:
+
+1. Fetches the object metadata tree from APS after conversion
+2. Maps the numeric object IDs to their original CAD component names
+3. Rewrites the OBJ file with readable group names
+
+**Before rehydration:**
+```
+g Obj.148
+g Obj.173
+g Obj.198
+```
+
+**After rehydration:**
+```
+g 3_5x13_Autof_TB_Grey_148
+g TL0104_Inox_173
+g TL0151_Inox_198
+```
+
+This makes the exported OBJ files much more usable for further editing in 3D software, as objects retain their meaningful names from the original CAD file.
+
 ---
 
 ### 2. Simple Mesh → Simple Mesh (Full Fallback Chain)

@@ -17,6 +17,33 @@ import fs from 'fs-extra';
 import path from 'path';
 import { ConversionError, TimeoutError } from '../../../common/errors';
 import config from '../../../config/env';
+import { rehydrateObjNames, ApsObjectTree, ApsObjectNode } from '../utils/objRenamer';
+
+// Global storage for hierarchy data (keyed by OBJ file path)
+// This allows the Blender provider to access the hierarchy when converting OBJ → GLB
+const hierarchyCache = new Map<string, ApsObjectTree>();
+
+/**
+ * Get cached hierarchy data for an OBJ file (for Blender to build parent-child relationships)
+ */
+export function getHierarchyForObj(objPath: string): ApsObjectTree | undefined {
+  return hierarchyCache.get(objPath);
+}
+
+/**
+ * Save hierarchy data for an OBJ file
+ */
+function cacheHierarchyForObj(objPath: string, objectTree: ApsObjectTree): void {
+  hierarchyCache.set(objPath, objectTree);
+  console.log(`[APS] Cached hierarchy data for: ${path.basename(objPath)}`);
+}
+
+/**
+ * Clear cached hierarchy data (called after conversion is complete)
+ */
+export function clearHierarchyCache(objPath: string): void {
+  hierarchyCache.delete(objPath);
+}
 
 // Configuration from environment
 const APS_CLIENT_ID = process.env.APS_CLIENT_ID || '';
@@ -344,6 +371,116 @@ async function pollForSvf2Completion(
 }
 
 /**
+ * Fetch the full object hierarchy/tree from APS metadata
+ * This contains the mapping of objectId → readable names
+ * 
+ * API: GET /modelderivative/v2/designdata/{urn}/metadata/{guid}
+ * 
+ * Important: This endpoint returns 202 when the object tree is still being processed.
+ * We need to poll until we get 200 with the actual data.
+ * 
+ * @param token Access token
+ * @param urn Model URN
+ * @param modelGuid GUID of the 3D viewable
+ * @param timeout Maximum time to wait for object tree (default: 60s)
+ * @param pollInterval Time between polls (default: 2s)
+ * @returns Object tree with dbId → name mappings
+ */
+async function getObjectTree(
+  token: string,
+  urn: string,
+  modelGuid: string,
+  timeout: number = 60000,
+  pollInterval: number = 2000
+): Promise<ApsObjectTree> {
+  console.log(`[APS] Fetching object tree for model GUID: ${modelGuid}`);
+  
+  // Use forceget=true to retrieve large resources and x-ads-force header to retry on failures
+  const url = `${MODEL_DERIVATIVE_URL}/${urn}/metadata/${modelGuid}?forceget=true`;
+  console.log(`[APS] Object tree URL: ${url}`);
+  
+  const startTime = Date.now();
+  
+  while (Date.now() - startTime < timeout) {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'x-ads-force': 'true'
+      }
+    });
+    
+    // 202 Accepted = still processing, need to poll
+    if (response.status === 202) {
+      console.log('[APS] Object tree still processing (202 Accepted), waiting...');
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+      continue;
+    }
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.warn(`[APS] Failed to fetch object tree: ${response.status} ${errorText}`);
+      // Return empty tree instead of throwing - names are optional enhancement
+      return { data: { type: 'objects', objects: [] } };
+    }
+    
+    // 200 OK - we have the data
+    const objectTree = await response.json() as ApsObjectTree;
+    
+    // Check if we got actual data or just a success status
+    if (objectTree.data?.objects && objectTree.data.objects.length > 0) {
+      // Debug: Print the full object hierarchy to console for analysis
+      console.log('[APS] ========== FULL OBJECT HIERARCHY ==========');
+      console.log(JSON.stringify(objectTree, null, 2));
+      console.log('[APS] ========== END OBJECT HIERARCHY ==========');
+      
+      // Also log a summary
+      const objectCount = countObjects(objectTree);
+      console.log(`[APS] Object tree contains ${objectCount} objects`);
+      
+      return objectTree;
+    }
+    
+    // Got response but no data yet - check if it's just {"result": "success"} indicating not ready
+    const rawResponse = objectTree as any;
+    if (rawResponse.result === 'success' || (objectTree.data?.objects?.length === 0)) {
+      console.log('[APS] Object tree returned success but no data yet, waiting...');
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+      continue;
+    }
+    
+    // Got response with data field but empty objects
+    console.log('[APS] Object tree response:', JSON.stringify(objectTree, null, 2));
+    return objectTree;
+  }
+  
+  console.warn(`[APS] Object tree fetch timed out after ${timeout}ms`);
+  return { data: { type: 'objects', objects: [] } };
+}
+
+/**
+ * Count total objects in the tree (for logging)
+ */
+function countObjects(tree: ApsObjectTree): number {
+  let count = 0;
+  
+  function recurse(objects: ApsObjectNode[]) {
+    for (const obj of objects) {
+      count++;
+      if (obj.objects) {
+        recurse(obj.objects);
+      }
+    }
+  }
+  
+  if (tree.data?.objects) {
+    recurse(tree.data.objects);
+  }
+  
+  return count;
+}
+
+/**
  * Create OBJ extraction job from SVF2
  * Using objectIds [-1] extracts the whole model
  */
@@ -653,8 +790,36 @@ export async function apsConvert(
         token, urn, outputFormat, timeout / 2, pollInterval
       );
       
-      // Step 5: Download result
-      await downloadDerivative(token, urn, derivativeUrn, outputPath);
+      // Step 5: Download result to temp file first
+      const tempObjPath = outputPath + '.raw.obj';
+      await downloadDerivative(token, urn, derivativeUrn, tempObjPath);
+      
+      // Step 6: Fetch object tree for name rehydration (only for OBJ output)
+      if (outputFormat === 'obj') {
+        console.log('[APS] Step 6: Fetching object tree for name rehydration...');
+        try {
+          const objectTree = await getObjectTree(token, urn, modelGuid);
+          
+          // Step 7: Rehydrate names in OBJ file
+          console.log('[APS] Step 7: Rehydrating OBJ names...');
+          await rehydrateObjNames(tempObjPath, objectTree, outputPath);
+          
+          // Cache the hierarchy for Blender to use when converting OBJ → GLB
+          // This enables parent-child relationship reconstruction in the GLB output
+          cacheHierarchyForObj(outputPath, objectTree);
+          
+          // Clean up temp file
+          await fs.remove(tempObjPath).catch(() => {});
+          console.log('[APS] Name rehydration complete!');
+        } catch (rehydrateErr) {
+          console.warn(`[APS] Name rehydration failed, using raw OBJ: ${rehydrateErr instanceof Error ? rehydrateErr.message : String(rehydrateErr)}`);
+          // Fall back to raw OBJ if rehydration fails
+          await fs.move(tempObjPath, outputPath, { overwrite: true });
+        }
+      } else {
+        // For STL and other formats, just rename the temp file
+        await fs.move(tempObjPath, outputPath, { overwrite: true });
+      }
     } else {
       // Direct translation for supported formats
       const urn = await createTranslationJob(token, objectId, outputFormat);

@@ -2,6 +2,11 @@
  * Blender Provider - Handles 3D conversions using Blender CLI
  * 
  * SECURITY: Uses spawn() instead of exec() to prevent command injection
+ * 
+ * HIERARCHY PRESERVATION:
+ * When converting OBJ files that came from APS (DWG/DXF), we can reconstruct
+ * the parent-child hierarchy in the exported GLB by passing the APS object tree
+ * as a JSON environment variable to the Blender script.
  */
 
 import { spawn, ChildProcess } from 'child_process';
@@ -11,6 +16,7 @@ import { ConversionError, TimeoutError } from '../../../common/errors';
 import { BLENDER_SCRIPT_PATH } from '../../../common/constants';
 import config from '../../../config/env';
 import pLimit from 'p-limit';
+import { getHierarchyForObj, clearHierarchyCache } from './autodesk.provider';
 
 // Limit concurrent Blender processes to prevent OOM
 const blenderLimit = pLimit(config.maxConcurrentBlender);
@@ -104,6 +110,17 @@ async function executeBlender(
   console.log(`[Blender] Input: ${inputPath}`);
   console.log(`[Blender] Output: ${outputPath}`);
 
+  // Check if we have hierarchy data for this OBJ file (from APS conversion)
+  // This enables parent-child relationship reconstruction in GLB output
+  let hierarchyJson = '';
+  if (inputFormat === 'obj' && (outputFormat === 'glb' || outputFormat === 'gltf')) {
+    const hierarchy = getHierarchyForObj(inputPath);
+    if (hierarchy) {
+      hierarchyJson = JSON.stringify(hierarchy);
+      console.log(`[Blender] Found APS hierarchy data - will build parent-child relationships`);
+    }
+  }
+
   return new Promise((resolve, reject) => {
     // Environment variables for the Python script
     const env: NodeJS.ProcessEnv = {
@@ -112,6 +129,8 @@ async function executeBlender(
       INPUT_FILE_FORMAT: inputFormat,
       OUTPUT_FILE_PATH: outputPath,
       OUTPUT_FILE_FORMAT: outputFormat,
+      // Pass hierarchy JSON for GLB export (empty string if not available)
+      OBJ_HIERARCHY_JSON: hierarchyJson,
     };
 
     // ✅ SECURE: Using spawn with arguments array (no shell injection possible)
@@ -163,10 +182,21 @@ async function executeBlender(
         return;
       }
 
+      // Log Blender output for debugging (especially hierarchy messages)
+      if (stdout.includes('[Blender]')) {
+        const blenderLines = stdout.split('\n').filter(line => line.includes('[Blender]'));
+        blenderLines.forEach(line => console.log(line.trim()));
+      }
+
       // Check if output file is essentially empty (no geometry)
       // This catches cases like DXF with ACIS solids that import as EMPTYs
       checkOutputValidity(outputPath, outputFormat)
         .then((isValid) => {
+          // Clean up hierarchy cache after conversion (whether successful or not)
+          if (inputFormat === 'obj') {
+            clearHierarchyCache(inputPath);
+          }
+          
           if (!isValid) {
             reject(new ConversionError(
               'Blender conversion produced empty output (no geometry found)',
